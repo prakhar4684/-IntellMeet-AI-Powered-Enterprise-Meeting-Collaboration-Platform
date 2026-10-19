@@ -20,9 +20,23 @@ export const createApp = (): Application => {
 
   // Security Headers & CORS
   app.use(helmet({ contentSecurityPolicy: false }));
+  const configuredClientUrl = env.CLIENT_URL?.trim().replace(/\/+$/, '');
   app.use(
     cors({
-      origin: env.CLIENT_URL || 'http://localhost:5173',
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        const cleanOrigin = origin.trim().replace(/\/+$/, '');
+        if (
+          !configuredClientUrl ||
+          cleanOrigin === configuredClientUrl ||
+          cleanOrigin.endsWith('.vercel.app') ||
+          cleanOrigin.includes('localhost') ||
+          cleanOrigin.includes('127.0.0.1')
+        ) {
+          return callback(null, true);
+        }
+        return callback(null, true);
+      },
       credentials: true,
     })
   );

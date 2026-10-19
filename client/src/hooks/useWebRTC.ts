@@ -160,10 +160,12 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
       }
 
       // 2. Connect to Socket.io directly
-      const socketUrl =
-        window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-          ? 'http://localhost:5000'
-          : window.location.origin;
+      const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+      const socketUrl = envUrl
+        ? envUrl.replace(/\/+$/, '').replace(/\/api$/, '')
+        : window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'http://localhost:5000'
+        : window.location.origin;
 
       console.log(`[Socket] Connecting to ${socketUrl}...`);
       const socket = io(socketUrl, {

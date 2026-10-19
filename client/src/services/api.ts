@@ -1,4 +1,13 @@
-const API_BASE_URL = '/api';
+const getBaseApiUrl = (): string => {
+  const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  if (!envUrl) {
+    return '/api';
+  }
+  const clean = envUrl.replace(/\/+$/, '');
+  return clean.endsWith('/api') ? clean : `${clean}/api`;
+};
+
+const API_BASE_URL = getBaseApiUrl();
 
 class ApiClient {
   private accessToken: string | null = localStorage.getItem('intellmeet_token');
@@ -32,7 +41,8 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
-    let response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    let response = await fetch(`${API_BASE_URL}${cleanEndpoint}`, {
       ...options,
       headers,
     });
@@ -42,16 +52,32 @@ class ApiClient {
       const refreshed = await this.tryRefreshToken();
       if (refreshed) {
         headers['Authorization'] = `Bearer ${this.accessToken}`;
-        response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        response = await fetch(`${API_BASE_URL}${cleanEndpoint}`, {
           ...options,
           headers,
         });
       }
     }
 
-    const data = await response.json();
+    const contentType = response.headers.get('content-type') || '';
+    let data: any = null;
+
+    if (contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(
+          response.status === 404
+            ? `API Endpoint not found (${response.status}). Please ensure VITE_API_URL on Vercel is set to your Render backend URL.`
+            : `Server returned non-JSON response (${response.status}): ${text.substring(0, 100)}`
+        );
+      }
+      return text as unknown as T;
+    }
+
     if (!response.ok) {
-      throw new Error(data.message || 'An API error occurred');
+      throw new Error(data?.message || 'An API error occurred');
     }
     return data.data !== undefined ? data.data : data;
   }
@@ -63,6 +89,8 @@ class ApiClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: this.refreshToken }),
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return false;
       const data = await res.json();
       if (data.success && data.data) {
         this.setTokens(data.data.accessToken, data.data.refreshToken);
