@@ -27,12 +27,14 @@ interface MeetingState {
   toggleRecording: () => void;
   setAudioMuted: (muted: boolean) => void;
   setVideoOff: (videoOff: boolean) => void;
+  setScreenSharing: (sharing: boolean) => void;
   setActiveTab: (tab: 'chat' | 'participants' | 'ai' | 'info') => void;
   addChatMessage: (msg: ChatMessage) => void;
   setParticipants: (list: MeetingParticipantInfo[]) => void;
   addParticipant: (p: MeetingParticipantInfo) => void;
   removeParticipant: (socketId: string) => void;
   updateParticipantMedia: (socketId: string, isMuted: boolean, isVideoOff: boolean) => void;
+  updateParticipantScreenShare: (socketId: string, isScreenSharing: boolean) => void;
   updateParticipantStream: (socketId: string, stream: MediaStream) => void;
   resetMeeting: () => void;
 }
@@ -54,6 +56,7 @@ export const useMeetingStore = create<MeetingState>((set) => ({
   toggleRecording: () => set((state) => ({ isRecording: !state.isRecording })),
   setAudioMuted: (isAudioMuted) => set({ isAudioMuted }),
   setVideoOff: (isVideoOff) => set({ isVideoOff }),
+  setScreenSharing: (isScreenSharing) => set({ isScreenSharing }),
   setActiveTab: (activeTab) => set({ activeTab }),
   addChatMessage: (msg) => set((state) => ({ chatMessages: [...state.chatMessages, msg] })),
 
@@ -84,12 +87,38 @@ export const useMeetingStore = create<MeetingState>((set) => ({
       ),
     })),
 
-  updateParticipantStream: (socketId, stream) =>
+  updateParticipantScreenShare: (socketId, isScreenSharing) =>
     set((state) => ({
       participants: state.participants.map((p) =>
-        p.socketId === socketId ? { ...p, stream } : p
+        p.socketId === socketId ? { ...p, isScreenSharing } : p
       ),
     })),
+
+  updateParticipantStream: (socketId, stream) =>
+    set((state) => {
+      const exists = state.participants.some((p) => p.socketId === socketId);
+      if (exists) {
+        return {
+          participants: state.participants.map((p) =>
+            p.socketId === socketId ? { ...p, stream } : p
+          ),
+        };
+      }
+      return {
+        participants: [
+          ...state.participants,
+          {
+            socketId,
+            userId: socketId,
+            displayName: 'Participant',
+            isMuted: false,
+            isVideoOff: false,
+            isScreenSharing: false,
+            stream,
+          },
+        ],
+      };
+    }),
 
   resetMeeting: () =>
     set({

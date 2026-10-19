@@ -16,11 +16,14 @@ import {
   PhoneOff,
   Send,
   Sparkles,
-  ShieldCheck,
+  Maximize2,
 } from 'lucide-react';
 
 // Dedicated Sub-component for Remote Participant Video & Audio Tile
-const RemoteVideoTile: React.FC<{ participant: MeetingParticipantInfo }> = ({ participant }) => {
+const RemoteVideoTile: React.FC<{
+  participant: MeetingParticipantInfo;
+  isCompact?: boolean;
+}> = ({ participant, isCompact = false }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -35,16 +38,20 @@ const RemoteVideoTile: React.FC<{ participant: MeetingParticipantInfo }> = ({ pa
         audioRef.current.play().catch(() => {});
       }
     }
-  }, [participant.stream]);
+  }, [participant.stream, participant.isVideoOff, participant.isScreenSharing]);
 
   const hasVideoStream =
     participant.stream &&
     participant.stream.getVideoTracks().length > 0 &&
     participant.stream.getVideoTracks()[0].enabled &&
-    !participant.isVideoOff;
+    (!participant.isVideoOff || participant.isScreenSharing);
+
+  const containerClasses = isCompact
+    ? 'w-48 h-28 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md'
+    : 'relative aspect-video rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg transition-all';
 
   return (
-    <div className="relative aspect-video rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg transition-all">
+    <div className={containerClasses}>
       {hasVideoStream ? (
         <video
           ref={videoRef}
@@ -53,25 +60,126 @@ const RemoteVideoTile: React.FC<{ participant: MeetingParticipantInfo }> = ({ pa
           className="w-full h-full object-cover"
         />
       ) : (
-        <div className="flex flex-col items-center gap-3 text-slate-400">
-          <div className="h-16 w-16 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-xl shadow-xl shadow-indigo-600/30">
+        <div className="flex flex-col items-center gap-1.5 text-slate-400 p-2 text-center">
+          <div
+            className={`${
+              isCompact ? 'h-10 w-10 text-sm' : 'h-16 w-16 text-xl'
+            } rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-xl shadow-indigo-600/30`}
+          >
             {participant.displayName.charAt(0).toUpperCase()}
           </div>
-          <span className="text-sm font-semibold text-slate-200">{participant.displayName}</span>
-          <span className="text-[11px] text-slate-500">Camera is off</span>
+          <span className="text-xs font-semibold text-slate-200 truncate max-w-[120px]">
+            {participant.displayName}
+          </span>
+          {!isCompact && <span className="text-[11px] text-slate-500">Camera is off</span>}
         </div>
       )}
 
       {/* Hidden Audio Element for playback regardless of video state */}
       <audio ref={audioRef} autoPlay playsInline />
 
-      <div className="absolute bottom-3 left-3 bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl text-xs font-medium text-white flex items-center gap-2 border border-slate-800/80 shadow-md">
+      <div className="absolute bottom-2 left-2 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md">
         {participant.isMuted ? (
-          <MicOff className="h-3.5 w-3.5 text-red-400" />
+          <MicOff className="h-3 w-3 text-red-400" />
         ) : (
-          <Mic className="h-3.5 w-3.5 text-emerald-400" />
+          <Mic className="h-3 w-3 text-emerald-400" />
         )}
-        <span>{participant.displayName}</span>
+        <span className="truncate max-w-[90px]">{participant.displayName}</span>
+        {participant.isScreenSharing && (
+          <span className="bg-indigo-600 text-[9px] px-1.5 py-0.5 rounded text-white font-bold ml-1">
+            Screen
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Dedicated Screen Share Presentation Stage Component
+const PresenterScreenTile: React.FC<{
+  stream: MediaStream | null;
+  presenterName: string;
+  isLocal: boolean;
+  onStopShare?: () => void;
+}> = ({ stream, presenterName, isLocal, onStopShare }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch((err) => {
+        console.warn('[ScreenShare] Video play caught:', err);
+      });
+    }
+    if (!isLocal && audioRef.current && stream) {
+      audioRef.current.srcObject = stream;
+      audioRef.current.play().catch(() => {});
+    }
+  }, [stream, isLocal]);
+
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return;
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
+    }
+  };
+
+  const hasVideo = !!stream && stream.getVideoTracks().length > 0;
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex-1 w-full bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden flex items-center justify-center shadow-2xl group min-h-[320px]"
+    >
+      {hasVideo ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={isLocal}
+          className="w-full h-full object-contain max-h-[calc(100vh-250px)]"
+        />
+      ) : (
+        <div className="flex flex-col items-center gap-3 text-slate-400">
+          <Monitor className="h-12 w-12 text-indigo-400 animate-pulse" />
+          <span className="text-sm font-medium">Connecting to {presenterName}'s screen...</span>
+        </div>
+      )}
+
+      {/* Hidden Audio for remote presenter */}
+      {!isLocal && <audio ref={audioRef} autoPlay playsInline />}
+
+      {/* Top Left Info Badge */}
+      <div className="absolute top-4 left-4 bg-slate-950/90 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold text-white flex items-center gap-2 shadow-lg z-10">
+        <span className="h-2 w-2 rounded-full bg-indigo-500 animate-ping" />
+        <Monitor className="h-4 w-4 text-indigo-400" />
+        <span>{isLocal ? 'You are sharing your screen' : `${presenterName} is presenting`}</span>
+      </div>
+
+      {/* Top Right Controls */}
+      <div className="absolute top-4 right-4 flex items-center gap-2 z-10">
+        {isLocal && onStopShare && (
+          <button
+            onClick={onStopShare}
+            className="flex items-center gap-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-lg transition-all"
+          >
+            Stop Sharing
+          </button>
+        )}
+        <button
+          onClick={toggleFullscreen}
+          className="bg-slate-900/80 hover:bg-slate-800 text-slate-200 p-2 rounded-xl backdrop-blur-md border border-slate-700/80 transition-all"
+          title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+        >
+          <Maximize2 className="h-4 w-4" />
+        </button>
       </div>
     </div>
   );
@@ -96,23 +204,23 @@ export const LiveMeetingRoomPage: React.FC = () => {
   const {
     isAudioMuted,
     isVideoOff,
-    isScreenSharing,
     isRecording,
     activeTab,
     chatMessages,
     participants,
     toggleAudio,
     toggleVideo,
-    toggleScreenShare,
     toggleRecording,
     setActiveTab,
   } = useMeetingStore();
 
-  const { localStream, startScreenShare, sendChatMessage } = useWebRTC(
-    meetingRoomId,
-    sessionUserId,
-    displayName
-  );
+  const {
+    localStream,
+    screenStream,
+    isSharingScreen,
+    toggleScreenShare: handleToggleScreenShare,
+    sendChatMessage,
+  } = useWebRTC(meetingRoomId, sessionUserId, displayName);
 
   const [messageInput, setMessageInput] = useState('');
   const [aiQuery, setAiQuery] = useState('');
@@ -125,7 +233,7 @@ export const LiveMeetingRoomPage: React.FC = () => {
       localVideoRef.current.srcObject = localStream;
       localVideoRef.current.play().catch(() => {});
     }
-  }, [localStream]);
+  }, [localStream, isVideoOff]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,6 +267,8 @@ export const LiveMeetingRoomPage: React.FC = () => {
   };
 
   const totalParticipantsCount = participants.length + 1; // Remote + Local
+  const remotePresenter = participants.find((p) => p.isScreenSharing);
+  const isAnyonePresenting = isSharingScreen || !!remotePresenter;
 
   return (
     <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans overflow-hidden">
@@ -190,46 +300,104 @@ export const LiveMeetingRoomPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Area: Video Grid & Side Panels */}
+      {/* Main Area: Video / Presentation Stage & Side Panels */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Video Grid */}
+        {/* Video / Presentation Viewport */}
         <main className="flex-1 bg-slate-950 p-4 flex flex-col justify-between overflow-y-auto">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 items-center justify-center">
-            {/* Local Participant Video Tile */}
-            <div className="relative aspect-video rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg group">
-              {isVideoOff || !localStream ? (
-                <div className="flex flex-col items-center gap-3 text-slate-500">
-                  <div className="h-16 w-16 rounded-full bg-indigo-600/30 flex items-center justify-center font-bold text-indigo-300 text-xl shadow-lg">
-                    {displayName.charAt(0).toUpperCase()}
-                  </div>
-                  <span className="text-sm font-semibold text-slate-300">{displayName} (You)</span>
-                  <span className="text-[11px] text-slate-500">Camera is off</span>
-                </div>
+          {isAnyonePresenting ? (
+            <div className="flex-1 flex flex-col gap-3 min-h-0 justify-between">
+              {/* Presentation Stage */}
+              {isSharingScreen ? (
+                <PresenterScreenTile
+                  stream={screenStream}
+                  presenterName={displayName}
+                  isLocal={true}
+                  onStopShare={handleToggleScreenShare}
+                />
               ) : (
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover transform -scale-x-100"
+                <PresenterScreenTile
+                  stream={remotePresenter?.stream || null}
+                  presenterName={remotePresenter?.displayName || 'Participant'}
+                  isLocal={false}
                 />
               )}
 
-              <div className="absolute bottom-3 left-3 bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl text-xs font-medium text-white flex items-center gap-2 border border-slate-800/80 shadow-md">
-                {isAudioMuted ? (
-                  <MicOff className="h-3.5 w-3.5 text-red-400" />
-                ) : (
-                  <Mic className="h-3.5 w-3.5 text-emerald-400" />
-                )}
-                <span>{displayName} (You)</span>
+              {/* Compact Filmstrip of Participants at bottom */}
+              <div className="flex items-center gap-3 overflow-x-auto pb-1 pt-1 shrink-0">
+                {/* Local Participant Compact Tile */}
+                <div className="w-48 h-28 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md">
+                  {isVideoOff || !localStream ? (
+                    <div className="flex flex-col items-center gap-1.5 text-slate-500">
+                      <div className="h-10 w-10 rounded-full bg-indigo-600/30 flex items-center justify-center font-bold text-indigo-300 text-sm shadow">
+                        {displayName.charAt(0).toUpperCase()}
+                      </div>
+                      <span className="text-xs font-semibold text-slate-300 truncate max-w-[120px]">
+                        {displayName} (You)
+                      </span>
+                    </div>
+                  ) : (
+                    <video
+                      ref={localVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover transform -scale-x-100"
+                    />
+                  )}
+                  <div className="absolute bottom-2 left-2 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md">
+                    {isAudioMuted ? (
+                      <MicOff className="h-3 w-3 text-red-400" />
+                    ) : (
+                      <Mic className="h-3 w-3 text-emerald-400" />
+                    )}
+                    <span className="truncate max-w-[90px]">{displayName} (You)</span>
+                  </div>
+                </div>
+
+                {/* Remote Participants Compact Tiles */}
+                {participants.map((peer) => (
+                  <RemoteVideoTile key={peer.socketId} participant={peer} isCompact={true} />
+                ))}
               </div>
             </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 items-center justify-center">
+              {/* Local Participant Video Tile */}
+              <div className="relative aspect-video rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg group">
+                {isVideoOff || !localStream ? (
+                  <div className="flex flex-col items-center gap-3 text-slate-500">
+                    <div className="h-16 w-16 rounded-full bg-indigo-600/30 flex items-center justify-center font-bold text-indigo-300 text-xl shadow-lg">
+                      {displayName.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="text-sm font-semibold text-slate-300">{displayName} (You)</span>
+                    <span className="text-[11px] text-slate-500">Camera is off</span>
+                  </div>
+                ) : (
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover transform -scale-x-100"
+                  />
+                )}
 
-            {/* Remote Participants Video Tiles */}
-            {participants.map((peer) => (
-              <RemoteVideoTile key={peer.socketId} participant={peer} />
-            ))}
-          </div>
+                <div className="absolute bottom-3 left-3 bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl text-xs font-medium text-white flex items-center gap-2 border border-slate-800/80 shadow-md">
+                  {isAudioMuted ? (
+                    <MicOff className="h-3.5 w-3.5 text-red-400" />
+                  ) : (
+                    <Mic className="h-3.5 w-3.5 text-emerald-400" />
+                  )}
+                  <span>{displayName} (You)</span>
+                </div>
+              </div>
+
+              {/* Remote Participants Video Tiles */}
+              {participants.map((peer) => (
+                <RemoteVideoTile key={peer.socketId} participant={peer} />
+              ))}
+            </div>
+          )}
 
           {/* Bottom Control Bar */}
           <div className="mt-4 h-16 bg-slate-900 border border-slate-800 rounded-2xl px-6 flex items-center justify-between shrink-0 max-w-4xl mx-auto w-full shadow-2xl">
@@ -257,14 +425,11 @@ export const LiveMeetingRoomPage: React.FC = () => {
                 {isVideoOff ? <VideoOff className="h-5 w-5" /> : <VideoIcon className="h-5 w-5" />}
               </button>
               <button
-                onClick={() => {
-                  toggleScreenShare();
-                  startScreenShare();
-                }}
-                title="Share Screen"
+                onClick={handleToggleScreenShare}
+                title={isSharingScreen ? 'Stop Sharing Screen' : 'Share Screen'}
                 className={`p-3 rounded-xl transition-all ${
-                  isScreenSharing
-                    ? 'bg-indigo-600 text-white'
+                  isSharingScreen
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/40 ring-2 ring-indigo-400'
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
@@ -350,10 +515,13 @@ export const LiveMeetingRoomPage: React.FC = () => {
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-white">{displayName} (You)</p>
-                      <p className="text-[10px] text-indigo-400 font-medium">Host</p>
+                      <p className="text-[10px] text-indigo-400 font-medium">
+                        {isSharingScreen ? 'Host • Presenting' : 'Host'}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-2">
+                    {isSharingScreen && <Monitor className="h-3.5 w-3.5 text-indigo-400" />}
                     {isAudioMuted ? (
                       <MicOff className="h-3.5 w-3.5 text-red-400" />
                     ) : (
@@ -374,16 +542,19 @@ export const LiveMeetingRoomPage: React.FC = () => {
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-white">{p.displayName}</p>
-                        <p className="text-[10px] text-slate-400">Participant</p>
+                        <p className="text-[10px] text-slate-400">
+                          {p.isScreenSharing ? 'Participant • Presenting' : 'Participant'}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      {p.isScreenSharing && <Monitor className="h-3.5 w-3.5 text-indigo-400" />}
                       {p.isMuted ? (
                         <MicOff className="h-3.5 w-3.5 text-red-400" />
                       ) : (
                         <Mic className="h-3.5 w-3.5 text-emerald-400" />
                       )}
-                      {p.isVideoOff ? (
+                      {p.isVideoOff && !p.isScreenSharing ? (
                         <VideoOff className="h-3.5 w-3.5 text-slate-500" />
                       ) : (
                         <VideoIcon className="h-3.5 w-3.5 text-indigo-400" />
