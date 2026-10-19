@@ -22,6 +22,80 @@ import {
   Check,
 } from 'lucide-react';
 
+// Dedicated Sub-component for Local User Video Tile (Guarantees fresh srcObject attachment across mode switches)
+const LocalVideoTile: React.FC<{
+  stream: MediaStream | null;
+  isVideoOff: boolean;
+  isAudioMuted: boolean;
+  displayName: string;
+  isCompact?: boolean;
+  tileClass?: string;
+}> = ({
+  stream,
+  isVideoOff,
+  isAudioMuted,
+  displayName,
+  isCompact = false,
+  tileClass = '',
+}) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [stream, isVideoOff]);
+
+  const hasVideoStream =
+    stream &&
+    stream.getVideoTracks().length > 0 &&
+    stream.getVideoTracks().some((t) => t.enabled) &&
+    !isVideoOff;
+
+  const containerClasses = isCompact
+    ? 'w-44 h-28 sm:w-52 sm:h-32 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md'
+    : `relative rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg ${tileClass}`;
+
+  return (
+    <div className={containerClasses}>
+      {hasVideoStream ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={true}
+          className="w-full h-full object-cover transform -scale-x-100"
+        />
+      ) : (
+        <div className="flex flex-col items-center gap-2 text-slate-400 p-2 text-center">
+          <div
+            className={`${
+              isCompact ? 'h-10 w-10 text-sm' : 'h-16 w-16 sm:h-20 sm:w-20 text-xl sm:text-2xl'
+            } rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-xl shadow-indigo-600/30`}
+          >
+            {displayName.charAt(0).toUpperCase()}
+          </div>
+          <span className="text-xs sm:text-sm font-semibold text-slate-200 truncate max-w-[140px]">
+            {displayName} (You)
+          </span>
+          {!isCompact && <span className="text-[11px] text-slate-500">Camera is off</span>}
+        </div>
+      )}
+
+      {/* Participant Name & Status Badge */}
+      <div className="absolute bottom-2.5 left-2.5 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md">
+        {isAudioMuted ? (
+          <MicOff className="h-3 w-3 text-red-400" />
+        ) : (
+          <Mic className="h-3 w-3 text-emerald-400" />
+        )}
+        <span className="truncate max-w-[110px]">{displayName} (You)</span>
+      </div>
+    </div>
+  );
+};
+
 // Dedicated Sub-component for Remote Participant Video & Audio Tile
 const RemoteVideoTile: React.FC<{
   participant: MeetingParticipantInfo;
@@ -85,7 +159,7 @@ const RemoteVideoTile: React.FC<{
 
   const containerClasses = isCompact
     ? 'w-44 h-28 sm:w-52 sm:h-32 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md'
-    : `relative rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg transition-all ${tileClass}`;
+    : `relative rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg ${tileClass}`;
 
   return (
     <div className={containerClasses}>
@@ -286,7 +360,6 @@ export const LiveMeetingRoomPage: React.FC = () => {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isAudioBlocked, setIsAudioBlocked] = useState(false);
 
-  const localVideoRef = useRef<HTMLVideoElement>(null);
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
 
   // Audio Element Registry for global unlock
@@ -318,13 +391,6 @@ export const LiveMeetingRoomPage: React.FC = () => {
       window.removeEventListener('touchstart', handleUserInteraction);
     };
   }, [unlockAllAudio]);
-
-  useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-      localVideoRef.current.play().catch(() => {});
-    }
-  }, [localStream, isVideoOff]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -490,34 +556,13 @@ export const LiveMeetingRoomPage: React.FC = () => {
               {/* Compact Filmstrip of Participants at bottom */}
               <div className="flex items-center gap-3 overflow-x-auto pb-1 pt-1 shrink-0 justify-center w-full">
                 {/* Local Participant Compact Tile */}
-                <div className="w-44 h-28 sm:w-52 sm:h-32 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md">
-                  {isVideoOff || !localStream ? (
-                    <div className="flex flex-col items-center gap-1.5 text-slate-500">
-                      <div className="h-10 w-10 rounded-full bg-indigo-600/30 flex items-center justify-center font-bold text-indigo-300 text-sm shadow">
-                        {displayName.charAt(0).toUpperCase()}
-                      </div>
-                      <span className="text-xs font-semibold text-slate-300 truncate max-w-[120px]">
-                        {displayName} (You)
-                      </span>
-                    </div>
-                  ) : (
-                    <video
-                      ref={localVideoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover transform -scale-x-100"
-                    />
-                  )}
-                  <div className="absolute bottom-2 left-2 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md">
-                    {isAudioMuted ? (
-                      <MicOff className="h-3 w-3 text-red-400" />
-                    ) : (
-                      <Mic className="h-3 w-3 text-emerald-400" />
-                    )}
-                    <span className="truncate max-w-[90px]">{displayName} (You)</span>
-                  </div>
-                </div>
+                <LocalVideoTile
+                  stream={localStream}
+                  isVideoOff={isVideoOff}
+                  isAudioMuted={isAudioMuted}
+                  displayName={displayName}
+                  isCompact={true}
+                />
 
                 {/* Remote Participants Compact Tiles */}
                 {participants.map((peer) => (
@@ -535,34 +580,14 @@ export const LiveMeetingRoomPage: React.FC = () => {
           ) : (
             <div className={gridConfig.gridClass}>
               {/* Local Participant Video Tile */}
-              <div className={`relative ${gridConfig.tileClass}`}>
-                {isVideoOff || !localStream ? (
-                  <div className="flex flex-col items-center gap-3 text-slate-500">
-                    <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-full bg-indigo-600/30 flex items-center justify-center font-bold text-indigo-300 text-xl sm:text-2xl shadow-lg">
-                      {displayName.charAt(0).toUpperCase()}
-                    </div>
-                    <span className="text-sm font-semibold text-slate-300">{displayName} (You)</span>
-                    <span className="text-[11px] text-slate-500">Camera is off</span>
-                  </div>
-                ) : (
-                  <video
-                    ref={localVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover transform -scale-x-100"
-                  />
-                )}
-
-                <div className="absolute bottom-3 left-3 bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl text-xs font-medium text-white flex items-center gap-2 border border-slate-800/80 shadow-md">
-                  {isAudioMuted ? (
-                    <MicOff className="h-3.5 w-3.5 text-red-400" />
-                  ) : (
-                    <Mic className="h-3.5 w-3.5 text-emerald-400" />
-                  )}
-                  <span>{displayName} (You)</span>
-                </div>
-              </div>
+              <LocalVideoTile
+                stream={localStream}
+                isVideoOff={isVideoOff}
+                isAudioMuted={isAudioMuted}
+                displayName={displayName}
+                isCompact={false}
+                tileClass={gridConfig.tileClass}
+              />
 
               {/* Remote Participants Video Tiles with Responsive Dimensions */}
               {participants.map((peer) => (

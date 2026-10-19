@@ -148,37 +148,59 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
     resetMeeting();
 
     const startWebRTC = async () => {
-      // 1. Resilient Media Acquisition with Echo Cancellation & Auto Gain Control
+      // 1. Resilient Media Acquisition with Multi-stage Delay Retry for Browser Refresh
       let mediaStream: MediaStream | null = null;
+      const idealVideoConstraints: MediaTrackConstraints = {
+        width: { ideal: 1280, max: 1920 },
+        height: { ideal: 720, max: 1080 },
+        frameRate: { ideal: 30, max: 30 },
+      };
+      const audioConstraints: MediaTrackConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: 'user',
-          },
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+          video: idealVideoConstraints,
+          audio: audioConstraints,
         });
       } catch (videoError) {
-        console.warn('[WebRTC] Video/Audio capture failed, trying audio-only:', videoError);
+        console.warn('[WebRTC] Primary capture failed, waiting 350ms for device release on refresh...', videoError);
+        // Wait 350ms for previous page's device handle to be freed by OS/browser
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        if (!isMounted) return;
+
         try {
           mediaStream = await navigator.mediaDevices.getUserMedia({
-            video: false,
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
+            video: true,
+            audio: audioConstraints,
           });
-          setVideoOff(true);
-        } catch (audioError) {
-          console.warn('[WebRTC] Media permission denied, joining in view/listen mode:', audioError);
-          setVideoOff(true);
-          setAudioMuted(true);
+        } catch (retryError) {
+          console.warn('[WebRTC] Video capture retry 1 failed, waiting 500ms...', retryError);
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          if (!isMounted) return;
+
+          try {
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: audioConstraints,
+            });
+          } catch (retry2Error) {
+            console.warn('[WebRTC] Video capture retries failed, falling back to audio-only:', retry2Error);
+            try {
+              mediaStream = await navigator.mediaDevices.getUserMedia({
+                video: false,
+                audio: audioConstraints,
+              });
+              setVideoOff(true);
+            } catch (audioError) {
+              console.warn('[WebRTC] Media permission denied, joining in view/listen mode:', audioError);
+              setVideoOff(true);
+              setAudioMuted(true);
+            }
+          }
         }
       }
 
@@ -374,14 +396,54 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
       localStreamRef.current.getAudioTracks().forEach((track) => {
         track.enabled = !isAudioMuted;
       });
-      localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = !isVideoOff;
-      });
+
+      const videoTracks = localStreamRef.current.getVideoTracks();
+      if (!isVideoOff && (videoTracks.length === 0 || videoTracks[0].readyState === 'ended')) {
+        // Camera was previously unavailable or ended, dynamically acquire camera track
+        navigator.mediaDevices
+          .getUserMedia({
+            video: {
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+              frameRate: { ideal: 30, max: 30 },
+            },
+          })
+          .then((newStream) => {
+            const newTrack = newStream.getVideoTracks()[0];
+            if (newTrack && localStreamRef.current) {
+              localStreamRef.current.getVideoTracks().forEach((t) => localStreamRef.current?.removeTrack(t));
+              localStreamRef.current.addTrack(newTrack);
+              setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+
+              peerConnectionsRef.current.forEach((pc) => {
+                const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video');
+                if (videoSender) {
+                  videoSender.replaceTrack(newTrack).catch(() => {});
+                } else {
+                  try {
+                    pc.addTrack(newTrack, localStreamRef.current!);
+                  } catch (e) {
+                    console.warn('[WebRTC] addTrack caught:', e);
+                  }
+                }
+              });
+            }
+          })
+          .catch((err) => {
+            console.warn('[WebRTC] Dynamic camera acquisition failed:', err);
+            setVideoOff(true);
+          });
+      } else {
+        videoTracks.forEach((track) => {
+          track.enabled = !isVideoOff;
+        });
+      }
+
       if (socketRef.current) {
         socketRef.current.emit('toggle-media', { roomId, isMuted: isAudioMuted, isVideoOff });
       }
     }
-  }, [isAudioMuted, isVideoOff, roomId]);
+  }, [isAudioMuted, isVideoOff, roomId, setVideoOff]);
 
   // Screen Share Actions
   const stopScreenShare = useCallback(() => {
@@ -395,6 +457,10 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
 
     // Restore local camera video track
     const cameraTrack = localStreamRef.current?.getVideoTracks()[0] || null;
+    if (cameraTrack) {
+      cameraTrack.enabled = !isVideoOff;
+    }
+
     peerConnectionsRef.current.forEach((pc) => {
       const videoTransceiver = pc.getTransceivers().find(
         (t) => (t.receiver && t.receiver.track && t.receiver.track.kind === 'video') ||
@@ -417,7 +483,7 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
     if (socketRef.current) {
       socketRef.current.emit('screen-share-changed', { roomId, isScreenSharing: false });
     }
-  }, [roomId, setScreenSharing]);
+  }, [roomId, isVideoOff, setScreenSharing]);
 
   const startScreenShare = useCallback(async () => {
     try {
