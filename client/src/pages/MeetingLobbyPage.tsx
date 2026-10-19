@@ -11,7 +11,9 @@ export const MeetingLobbyPage: React.FC = () => {
   const { user } = useAuthStore();
   const { isAudioMuted, isVideoOff, toggleAudio, toggleVideo } = useMeetingStore();
 
-  const [displayName, setDisplayName] = useState(user?.name || 'Engineer');
+  const [displayName, setDisplayName] = useState(
+    user?.name || `Guest_${Math.floor(100 + Math.random() * 900)}`
+  );
   const [meetingTitle, setMeetingTitle] = useState('Engineering Room');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -43,7 +45,9 @@ export const MeetingLobbyPage: React.FC = () => {
   }, [code]);
 
   const handleJoin = () => {
-    navigate(`/room/${code}?displayName=${encodeURIComponent(displayName)}`);
+    const finalName = displayName.trim() || user?.name || `Guest_${Math.floor(100 + Math.random() * 900)}`;
+    sessionStorage.setItem('intellmeet_displayName', finalName);
+    navigate(`/room/${code}`);
   };
 
   return (

@@ -18,6 +18,8 @@ import {
   Sparkles,
   Maximize2,
   Volume2,
+  Share2,
+  Check,
 } from 'lucide-react';
 
 // Dedicated Sub-component for Remote Participant Video & Audio Tile
@@ -222,9 +224,35 @@ export const LiveMeetingRoomPage: React.FC = () => {
   const { user } = useAuthStore();
 
   const queryName = searchParams.get('displayName');
-  const [displayName] = useState<string>(
-    queryName || user?.name || `Guest_${Math.floor(Math.random() * 900 + 100)}`
-  );
+  const [displayName] = useState<string>(() => {
+    // 1. If user is logged in, use their real profile name
+    if (user?.name) return user.name;
+    // 2. If name was entered in lobby sessionStorage
+    const stored = sessionStorage.getItem('intellmeet_displayName');
+    if (stored) return stored;
+    // 3. If query parameter was passed explicitly
+    if (queryName && queryName.trim()) {
+      return queryName.trim();
+    }
+    // 4. Fallback: generate a unique random Guest name (e.g. Guest_482)
+    return `Guest_${Math.floor(100 + Math.random() * 900)}`;
+  });
+
+  // Automatically remove ?displayName=... from address bar so copying URL never leaks name to others
+  useEffect(() => {
+    if (searchParams.has('displayName')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [searchParams]);
+
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const handleCopyInviteLink = () => {
+    const inviteUrl = `${window.location.origin}/room/${meetingRoomId}`;
+    navigator.clipboard.writeText(inviteUrl);
+    setCopiedInvite(true);
+    setTimeout(() => setCopiedInvite(false), 2500);
+  };
+
   const [sessionUserId] = useState<string>(
     user?.id || `user_${Math.random().toString(36).substring(2, 9)}`
   );
@@ -389,7 +417,25 @@ export const LiveMeetingRoomPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleCopyInviteLink}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition-all cursor-pointer"
+            title="Copy clean invitation link to share"
+          >
+            {copiedInvite ? (
+              <>
+                <Check className="h-3.5 w-3.5 text-white" />
+                <span>Link Copied!</span>
+              </>
+            ) : (
+              <>
+                <Share2 className="h-3.5 w-3.5 text-white" />
+                <span className="hidden sm:inline">Invite</span>
+              </>
+            )}
+          </button>
+
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-xs font-semibold text-slate-300">
             <Users className="h-3.5 w-3.5 text-indigo-400" />
             <span>{totalParticipantsCount} Online</span>
