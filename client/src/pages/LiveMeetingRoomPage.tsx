@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/useAuthStore';
 import { useMeetingStore, MeetingParticipantInfo } from '../store/useMeetingStore';
@@ -17,28 +17,63 @@ import {
   Send,
   Sparkles,
   Maximize2,
+  Volume2,
 } from 'lucide-react';
 
 // Dedicated Sub-component for Remote Participant Video & Audio Tile
 const RemoteVideoTile: React.FC<{
   participant: MeetingParticipantInfo;
   isCompact?: boolean;
-}> = ({ participant, isCompact = false }) => {
+  tileClass?: string;
+  onAudioBlocked?: () => void;
+  registerAudio?: (el: HTMLAudioElement) => void;
+  unregisterAudio?: () => void;
+}> = ({
+  participant,
+  isCompact = false,
+  tileClass = '',
+  onAudioBlocked,
+  registerAudio,
+  unregisterAudio,
+}) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
+  // Register audio element with global audio manager for autoplay unblock
+  useEffect(() => {
+    const el = audioRef.current;
+    if (el && registerAudio) {
+      registerAudio(el);
+    }
+    return () => {
+      if (unregisterAudio) {
+        unregisterAudio();
+      }
+    };
+  }, [participant.socketId, registerAudio, unregisterAudio]);
+
+  // Synchronize media stream to video and audio elements
   useEffect(() => {
     if (participant.stream) {
+      // 1. Attach to Video element (muted to ensure 100% autoplay compliance)
       if (videoRef.current) {
         videoRef.current.srcObject = participant.stream;
         videoRef.current.play().catch(() => {});
       }
+
+      // 2. Attach to Audio element (unmuted for remote voice playback)
       if (audioRef.current) {
         audioRef.current.srcObject = participant.stream;
-        audioRef.current.play().catch(() => {});
+        audioRef.current.volume = 1.0;
+        audioRef.current.play().catch((err: any) => {
+          console.warn('[RemoteVideoTile] Audio autoplay blocked:', err?.name);
+          if (err?.name === 'NotAllowedError' && onAudioBlocked) {
+            onAudioBlocked();
+          }
+        });
       }
     }
-  }, [participant.stream, participant.isVideoOff, participant.isScreenSharing]);
+  }, [participant.stream, participant.isVideoOff, participant.isScreenSharing, onAudioBlocked]);
 
   const hasVideoStream =
     participant.stream &&
@@ -47,44 +82,47 @@ const RemoteVideoTile: React.FC<{
     (!participant.isVideoOff || participant.isScreenSharing);
 
   const containerClasses = isCompact
-    ? 'w-48 h-28 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md'
-    : 'relative aspect-video rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg transition-all';
+    ? 'w-44 h-28 sm:w-52 sm:h-32 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md'
+    : `relative rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg transition-all ${tileClass}`;
 
   return (
     <div className={containerClasses}>
+      {/* Remote Video element - muted so browser never blocks rendering */}
       {hasVideoStream ? (
         <video
           ref={videoRef}
           autoPlay
           playsInline
+          muted={true}
           className="w-full h-full object-cover"
         />
       ) : (
-        <div className="flex flex-col items-center gap-1.5 text-slate-400 p-2 text-center">
+        <div className="flex flex-col items-center gap-2 text-slate-400 p-2 text-center">
           <div
             className={`${
-              isCompact ? 'h-10 w-10 text-sm' : 'h-16 w-16 text-xl'
+              isCompact ? 'h-10 w-10 text-sm' : 'h-16 w-16 sm:h-20 sm:w-20 text-xl sm:text-2xl'
             } rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-xl shadow-indigo-600/30`}
           >
             {participant.displayName.charAt(0).toUpperCase()}
           </div>
-          <span className="text-xs font-semibold text-slate-200 truncate max-w-[120px]">
+          <span className="text-xs sm:text-sm font-semibold text-slate-200 truncate max-w-[140px]">
             {participant.displayName}
           </span>
           {!isCompact && <span className="text-[11px] text-slate-500">Camera is off</span>}
         </div>
       )}
 
-      {/* Hidden Audio Element for playback regardless of video state */}
+      {/* Dedicated Remote Audio Element for guaranteed sound playback */}
       <audio ref={audioRef} autoPlay playsInline />
 
-      <div className="absolute bottom-2 left-2 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md">
+      {/* Participant Name & Status Badge */}
+      <div className="absolute bottom-2.5 left-2.5 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md">
         {participant.isMuted ? (
           <MicOff className="h-3 w-3 text-red-400" />
         ) : (
           <Mic className="h-3 w-3 text-emerald-400" />
         )}
-        <span className="truncate max-w-[90px]">{participant.displayName}</span>
+        <span className="truncate max-w-[110px]">{participant.displayName}</span>
         {participant.isScreenSharing && (
           <span className="bg-indigo-600 text-[9px] px-1.5 py-0.5 rounded text-white font-bold ml-1">
             Screen
@@ -103,7 +141,6 @@ const PresenterScreenTile: React.FC<{
   onStopShare?: () => void;
 }> = ({ stream, presenterName, isLocal, onStopShare }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -114,11 +151,7 @@ const PresenterScreenTile: React.FC<{
         console.warn('[ScreenShare] Video play caught:', err);
       });
     }
-    if (!isLocal && audioRef.current && stream) {
-      audioRef.current.srcObject = stream;
-      audioRef.current.play().catch(() => {});
-    }
-  }, [stream, isLocal]);
+  }, [stream]);
 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
@@ -136,15 +169,15 @@ const PresenterScreenTile: React.FC<{
   return (
     <div
       ref={containerRef}
-      className="relative flex-1 w-full bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden flex items-center justify-center shadow-2xl group min-h-[320px]"
+      className="relative flex-1 w-full bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden flex items-center justify-center shadow-2xl group min-h-[300px]"
     >
       {hasVideo ? (
         <video
           ref={videoRef}
           autoPlay
           playsInline
-          muted={isLocal}
-          className="w-full h-full object-contain max-h-[calc(100vh-250px)]"
+          muted={true}
+          className="w-full h-full object-contain max-h-[calc(100vh-270px)]"
         />
       ) : (
         <div className="flex flex-col items-center gap-3 text-slate-400">
@@ -152,9 +185,6 @@ const PresenterScreenTile: React.FC<{
           <span className="text-sm font-medium">Connecting to {presenterName}'s screen...</span>
         </div>
       )}
-
-      {/* Hidden Audio for remote presenter */}
-      {!isLocal && <audio ref={audioRef} autoPlay playsInline />}
 
       {/* Top Left Info Badge */}
       <div className="absolute top-4 left-4 bg-slate-950/90 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold text-white flex items-center gap-2 shadow-lg z-10">
@@ -226,7 +256,40 @@ export const LiveMeetingRoomPage: React.FC = () => {
   const [aiQuery, setAiQuery] = useState('');
   const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [isAudioBlocked, setIsAudioBlocked] = useState(false);
+
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+
+  // Audio Element Registry for global unlock
+  const registerAudioElement = useCallback((socketId: string, el: HTMLAudioElement) => {
+    audioElementsRef.current.set(socketId, el);
+  }, []);
+
+  const unregisterAudioElement = useCallback((socketId: string) => {
+    audioElementsRef.current.delete(socketId);
+  }, []);
+
+  // Global Audio Unlock handler for browser Autoplay Policy
+  const unlockAllAudio = useCallback(() => {
+    audioElementsRef.current.forEach((el) => {
+      el.play().catch(() => {});
+    });
+    setIsAudioBlocked(false);
+  }, []);
+
+  // Listen for user interaction to unblock audio seamlessly
+  useEffect(() => {
+    const handleUserInteraction = () => {
+      unlockAllAudio();
+    };
+    window.addEventListener('click', handleUserInteraction);
+    window.addEventListener('touchstart', handleUserInteraction);
+    return () => {
+      window.removeEventListener('click', handleUserInteraction);
+      window.removeEventListener('touchstart', handleUserInteraction);
+    };
+  }, [unlockAllAudio]);
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -270,6 +333,46 @@ export const LiveMeetingRoomPage: React.FC = () => {
   const remotePresenter = participants.find((p) => p.isScreenSharing);
   const isAnyonePresenting = isSharingScreen || !!remotePresenter;
 
+  // Intelligent Responsive Grid Configuration based on participant count
+  const getGridConfig = (count: number) => {
+    switch (count) {
+      case 1:
+        // Single user: Large, centered tile
+        return {
+          gridClass: 'grid grid-cols-1 w-full max-w-4xl mx-auto flex-1 items-center justify-center p-2',
+          tileClass: 'w-full h-full max-h-[calc(100vh-210px)] aspect-video mx-auto',
+        };
+      case 2:
+        // Two users: Balanced 50/50 split across screen
+        return {
+          gridClass: 'grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-6xl mx-auto flex-1 items-center justify-center p-2',
+          tileClass: 'w-full h-full max-h-[calc(100vh-220px)] aspect-video mx-auto',
+        };
+      case 3:
+      case 4:
+        // 3 or 4 users: 2x2 grid
+        return {
+          gridClass: 'grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-6xl mx-auto flex-1 items-center justify-center p-2',
+          tileClass: 'w-full h-full max-h-[calc(50vh-120px)] aspect-video mx-auto',
+        };
+      case 5:
+      case 6:
+        // 5 or 6 users: 3x2 grid
+        return {
+          gridClass: 'grid grid-cols-2 sm:grid-cols-3 gap-3 w-full flex-1 items-center justify-center p-2',
+          tileClass: 'w-full h-full max-h-[calc(50vh-120px)] aspect-video mx-auto',
+        };
+      default:
+        // 7+ users: 4 columns
+        return {
+          gridClass: 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 w-full flex-1 items-center justify-center p-2',
+          tileClass: 'w-full h-full max-h-[calc(33vh-90px)] aspect-video mx-auto',
+        };
+    }
+  };
+
+  const gridConfig = getGridConfig(totalParticipantsCount);
+
   return (
     <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans overflow-hidden">
       {/* Top Header Bar */}
@@ -300,10 +403,26 @@ export const LiveMeetingRoomPage: React.FC = () => {
         </div>
       </header>
 
+      {/* Autoplay Audio Unblock Notification Banner */}
+      {isAudioBlocked && (
+        <div
+          onClick={unlockAllAudio}
+          className="bg-indigo-600 hover:bg-indigo-500 cursor-pointer text-white px-4 py-2 text-xs font-semibold flex items-center justify-between shadow-xl transition-all z-50 animate-pulse"
+        >
+          <div className="flex items-center gap-2">
+            <Volume2 className="h-4 w-4" />
+            <span>Browser paused remote audio. Tap anywhere to enable sound and hear other participants!</span>
+          </div>
+          <span className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-xs font-bold transition-colors">
+            Tap to Hear 🔊
+          </span>
+        </div>
+      )}
+
       {/* Main Area: Video / Presentation Stage & Side Panels */}
       <div className="flex-1 flex overflow-hidden">
         {/* Video / Presentation Viewport */}
-        <main className="flex-1 bg-slate-950 p-4 flex flex-col justify-between overflow-y-auto">
+        <main className="flex-1 bg-slate-950 p-2 sm:p-4 flex flex-col justify-between overflow-hidden min-h-0">
           {isAnyonePresenting ? (
             <div className="flex-1 flex flex-col gap-3 min-h-0 justify-between">
               {/* Presentation Stage */}
@@ -323,9 +442,9 @@ export const LiveMeetingRoomPage: React.FC = () => {
               )}
 
               {/* Compact Filmstrip of Participants at bottom */}
-              <div className="flex items-center gap-3 overflow-x-auto pb-1 pt-1 shrink-0">
+              <div className="flex items-center gap-3 overflow-x-auto pb-1 pt-1 shrink-0 justify-center w-full">
                 {/* Local Participant Compact Tile */}
-                <div className="w-48 h-28 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md">
+                <div className="w-44 h-28 sm:w-52 sm:h-32 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md">
                   {isVideoOff || !localStream ? (
                     <div className="flex flex-col items-center gap-1.5 text-slate-500">
                       <div className="h-10 w-10 rounded-full bg-indigo-600/30 flex items-center justify-center font-bold text-indigo-300 text-sm shadow">
@@ -356,17 +475,24 @@ export const LiveMeetingRoomPage: React.FC = () => {
 
                 {/* Remote Participants Compact Tiles */}
                 {participants.map((peer) => (
-                  <RemoteVideoTile key={peer.socketId} participant={peer} isCompact={true} />
+                  <RemoteVideoTile
+                    key={peer.socketId}
+                    participant={peer}
+                    isCompact={true}
+                    onAudioBlocked={() => setIsAudioBlocked(true)}
+                    registerAudio={(el) => registerAudioElement(peer.socketId, el)}
+                    unregisterAudio={() => unregisterAudioElement(peer.socketId)}
+                  />
                 ))}
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1 items-center justify-center">
+            <div className={gridConfig.gridClass}>
               {/* Local Participant Video Tile */}
-              <div className="relative aspect-video rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-lg group">
+              <div className={`relative ${gridConfig.tileClass}`}>
                 {isVideoOff || !localStream ? (
                   <div className="flex flex-col items-center gap-3 text-slate-500">
-                    <div className="h-16 w-16 rounded-full bg-indigo-600/30 flex items-center justify-center font-bold text-indigo-300 text-xl shadow-lg">
+                    <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-full bg-indigo-600/30 flex items-center justify-center font-bold text-indigo-300 text-xl sm:text-2xl shadow-lg">
                       {displayName.charAt(0).toUpperCase()}
                     </div>
                     <span className="text-sm font-semibold text-slate-300">{displayName} (You)</span>
@@ -392,20 +518,27 @@ export const LiveMeetingRoomPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Remote Participants Video Tiles */}
+              {/* Remote Participants Video Tiles with Responsive Dimensions */}
               {participants.map((peer) => (
-                <RemoteVideoTile key={peer.socketId} participant={peer} />
+                <RemoteVideoTile
+                  key={peer.socketId}
+                  participant={peer}
+                  tileClass={gridConfig.tileClass}
+                  onAudioBlocked={() => setIsAudioBlocked(true)}
+                  registerAudio={(el) => registerAudioElement(peer.socketId, el)}
+                  unregisterAudio={() => unregisterAudioElement(peer.socketId)}
+                />
               ))}
             </div>
           )}
 
           {/* Bottom Control Bar */}
-          <div className="mt-4 h-16 bg-slate-900 border border-slate-800 rounded-2xl px-6 flex items-center justify-between shrink-0 max-w-4xl mx-auto w-full shadow-2xl">
-            <div className="flex items-center gap-3">
+          <div className="mt-2 sm:mt-4 h-16 bg-slate-900 border border-slate-800 rounded-2xl px-4 sm:px-6 flex items-center justify-between shrink-0 max-w-4xl mx-auto w-full shadow-2xl z-20">
+            <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={toggleAudio}
                 title={isAudioMuted ? 'Unmute Microphone' : 'Mute Microphone'}
-                className={`p-3 rounded-xl transition-all ${
+                className={`p-2.5 sm:p-3 rounded-xl transition-all ${
                   isAudioMuted
                     ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                     : 'bg-slate-800 text-white hover:bg-slate-700'
@@ -416,7 +549,7 @@ export const LiveMeetingRoomPage: React.FC = () => {
               <button
                 onClick={toggleVideo}
                 title={isVideoOff ? 'Start Camera' : 'Stop Camera'}
-                className={`p-3 rounded-xl transition-all ${
+                className={`p-2.5 sm:p-3 rounded-xl transition-all ${
                   isVideoOff
                     ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                     : 'bg-slate-800 text-white hover:bg-slate-700'
@@ -427,7 +560,7 @@ export const LiveMeetingRoomPage: React.FC = () => {
               <button
                 onClick={handleToggleScreenShare}
                 title={isSharingScreen ? 'Stop Sharing Screen' : 'Share Screen'}
-                className={`p-3 rounded-xl transition-all ${
+                className={`p-2.5 sm:p-3 rounded-xl transition-all ${
                   isSharingScreen
                     ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/40 ring-2 ring-indigo-400'
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -438,7 +571,7 @@ export const LiveMeetingRoomPage: React.FC = () => {
               <button
                 onClick={toggleRecording}
                 title="Toggle Recording"
-                className={`p-3 rounded-xl transition-all ${
+                className={`p-2.5 sm:p-3 rounded-xl transition-all ${
                   isRecording ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
@@ -449,7 +582,7 @@ export const LiveMeetingRoomPage: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setActiveTab('chat')}
-                className={`p-3 rounded-xl transition-all relative ${
+                className={`p-2.5 sm:p-3 rounded-xl transition-all relative ${
                   activeTab === 'chat'
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                     : 'bg-slate-800 text-slate-400 hover:text-white'
@@ -459,7 +592,7 @@ export const LiveMeetingRoomPage: React.FC = () => {
               </button>
               <button
                 onClick={() => setActiveTab('participants')}
-                className={`p-3 rounded-xl transition-all relative ${
+                className={`p-2.5 sm:p-3 rounded-xl transition-all relative ${
                   activeTab === 'participants'
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                     : 'bg-slate-800 text-slate-400 hover:text-white'
@@ -474,7 +607,7 @@ export const LiveMeetingRoomPage: React.FC = () => {
               </button>
               <button
                 onClick={() => setActiveTab('ai')}
-                className={`p-3 rounded-xl transition-all ${
+                className={`p-2.5 sm:p-3 rounded-xl transition-all ${
                   activeTab === 'ai'
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                     : 'bg-slate-800 text-slate-400 hover:text-white'
@@ -486,9 +619,10 @@ export const LiveMeetingRoomPage: React.FC = () => {
 
             <button
               onClick={handleLeaveCall}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white font-semibold text-xs px-5 py-2.5 rounded-xl shadow-lg shadow-red-600/30 transition-all"
+              className="flex items-center gap-1.5 sm:gap-2 bg-red-600 hover:bg-red-500 text-white font-semibold text-xs px-3 sm:px-5 py-2.5 rounded-xl shadow-lg shadow-red-600/30 transition-all"
             >
-              <PhoneOff className="h-4 w-4" /> End Call
+              <PhoneOff className="h-4 w-4" />
+              <span className="hidden sm:inline">End Call</span>
             </button>
           </div>
         </main>

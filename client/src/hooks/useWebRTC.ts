@@ -7,9 +7,13 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:stun.services.mozilla.com' },
     { urls: 'stun:global.stun.twilio.com:3478' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export const useWebRTC = (roomId: string, userId: string, displayName: string) => {
@@ -93,18 +97,31 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
         }
       };
 
-      // Remote stream arrival
+      // Remote stream arrival: combine native WebRTC stream with fallback tracking
       pc.ontrack = (event) => {
-        console.log(`[WebRTC] Received remote track (${event.track.kind}) from ${peerInfo.displayName}`);
+        console.log(`[WebRTC] Received remote track (${event.track.kind}) from ${peerInfo.displayName}`, event.track.id);
+        
         let remoteStream = remoteStreamsMapRef.current.get(targetSocketId);
         if (!remoteStream) {
           remoteStream = new MediaStream();
         }
 
-        // Add track if not already in the stream
+        // Add track to peer's media stream if not present
         if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
           remoteStream.addTrack(event.track);
         }
+
+        // Also add any additional tracks that came in the native event.streams[0]
+        if (event.streams && event.streams[0]) {
+          event.streams[0].getTracks().forEach((track) => {
+            if (!remoteStream!.getTracks().some((t) => t.id === track.id)) {
+              remoteStream!.addTrack(track);
+            }
+          });
+        }
+
+        // Ensure track is enabled
+        event.track.enabled = true;
 
         // Fresh MediaStream instance so React hook & component effect detects change
         const updatedStream = new MediaStream(remoteStream.getTracks());
@@ -114,6 +131,10 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
 
       pc.onconnectionstatechange = () => {
         console.log(`[WebRTC] Connection state with ${peerInfo.displayName}: ${pc.connectionState}`);
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log(`[WebRTC] ICE connection state with ${peerInfo.displayName}: ${pc.iceConnectionState}`);
       };
 
       return pc;
@@ -127,19 +148,31 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
     resetMeeting();
 
     const startWebRTC = async () => {
-      // 1. Resilient Media Acquisition
+      // 1. Resilient Media Acquisition with Echo Cancellation & Auto Gain Control
       let mediaStream: MediaStream | null = null;
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user',
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         });
       } catch (videoError) {
         console.warn('[WebRTC] Video/Audio capture failed, trying audio-only:', videoError);
         try {
           mediaStream = await navigator.mediaDevices.getUserMedia({
             video: false,
-            audio: true,
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
           });
           setVideoOff(true);
         } catch (audioError) {
@@ -155,6 +188,10 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
       }
 
       if (mediaStream) {
+        // Explicitly set audio track state
+        mediaStream.getAudioTracks().forEach((track) => {
+          track.enabled = !isAudioMuted;
+        });
         localStreamRef.current = mediaStream;
         setLocalStream(mediaStream);
       }
