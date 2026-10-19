@@ -39,19 +39,26 @@ const LocalVideoTile: React.FC<{
   tileClass = '',
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [isLocalFrameRendering, setIsLocalFrameRendering] = useState(false);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(() => {});
+    const video = videoRef.current;
+    if (video && stream) {
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+      video.muted = true;
+      video.defaultMuted = true;
+      video.play().catch(() => {});
     }
   }, [stream, isVideoOff]);
 
-  const hasVideoStream =
+  const hasActiveTrack =
     stream &&
     stream.getVideoTracks().length > 0 &&
-    stream.getVideoTracks().some((t) => t.enabled) &&
-    !isVideoOff;
+    stream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live');
+
+  const shouldRenderLocalVideo = hasActiveTrack && !isVideoOff;
 
   const containerClasses = isCompact
     ? 'w-44 h-28 sm:w-52 sm:h-32 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md'
@@ -59,32 +66,48 @@ const LocalVideoTile: React.FC<{
 
   return (
     <div className={containerClasses}>
-      {hasVideoStream ? (
+      {/* Permanent Fallback Avatar: always mounted underneath to prevent any black flashes */}
+      <div
+        className={`absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400 p-2 text-center transition-opacity duration-200 ${
+          shouldRenderLocalVideo && isLocalFrameRendering ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        }`}
+      >
+        <div
+          className={`${
+            isCompact ? 'h-10 w-10 text-sm' : 'h-16 w-16 sm:h-20 sm:w-20 text-xl sm:text-2xl'
+          } rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-xl shadow-indigo-600/30`}
+        >
+          {displayName.charAt(0).toUpperCase()}
+        </div>
+        <span className="text-xs sm:text-sm font-semibold text-slate-200 truncate max-w-[140px]">
+          {displayName} (You)
+        </span>
+        {!isCompact && (
+          <span className="text-[11px] text-slate-500">
+            {isVideoOff ? 'Camera is off' : 'Starting camera...'}
+          </span>
+        )}
+      </div>
+
+      {/* Local Video element: displayed only when actively delivering frames */}
+      {stream && (
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted={true}
-          className="w-full h-full object-cover transform -scale-x-100"
+          onLoadedData={() => setIsLocalFrameRendering(true)}
+          onPlaying={() => setIsLocalFrameRendering(true)}
+          onWaiting={() => setIsLocalFrameRendering(false)}
+          onPause={() => setIsLocalFrameRendering(false)}
+          className={`w-full h-full object-cover transform -scale-x-100 transition-opacity duration-200 ${
+            shouldRenderLocalVideo && isLocalFrameRendering ? 'opacity-100' : 'opacity-0'
+          }`}
         />
-      ) : (
-        <div className="flex flex-col items-center gap-2 text-slate-400 p-2 text-center">
-          <div
-            className={`${
-              isCompact ? 'h-10 w-10 text-sm' : 'h-16 w-16 sm:h-20 sm:w-20 text-xl sm:text-2xl'
-            } rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-xl shadow-indigo-600/30`}
-          >
-            {displayName.charAt(0).toUpperCase()}
-          </div>
-          <span className="text-xs sm:text-sm font-semibold text-slate-200 truncate max-w-[140px]">
-            {displayName} (You)
-          </span>
-          {!isCompact && <span className="text-[11px] text-slate-500">Camera is off</span>}
-        </div>
       )}
 
       {/* Participant Name & Status Badge */}
-      <div className="absolute bottom-2.5 left-2.5 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md">
+      <div className="absolute bottom-2.5 left-2.5 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md z-10">
         {isAudioMuted ? (
           <MicOff className="h-3 w-3 text-red-400" />
         ) : (
@@ -114,6 +137,8 @@ const RemoteVideoTile: React.FC<{
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [isTrackLive, setIsTrackLive] = useState(false);
+  const [isVideoFrameRendering, setIsVideoFrameRendering] = useState(false);
 
   // Register audio element with global audio manager for autoplay unblock
   useEffect(() => {
@@ -128,18 +153,58 @@ const RemoteVideoTile: React.FC<{
     };
   }, [participant.socketId, registerAudio, unregisterAudio]);
 
+  // Monitor remote video track state (mute, unmute, ended)
+  useEffect(() => {
+    const track = participant.stream?.getVideoTracks()[0];
+    if (!track || participant.isVideoOff) {
+      setIsTrackLive(false);
+      setIsVideoFrameRendering(false);
+      return;
+    }
+
+    const checkTrackState = () => {
+      const active = track.enabled && track.readyState === 'live' && !track.muted;
+      setIsTrackLive(active);
+    };
+
+    checkTrackState();
+
+    const handleMute = () => setIsTrackLive(false);
+    const handleUnmute = () => setIsTrackLive(true);
+    const handleEnded = () => {
+      setIsTrackLive(false);
+      setIsVideoFrameRendering(false);
+    };
+
+    track.addEventListener('mute', handleMute);
+    track.addEventListener('unmute', handleUnmute);
+    track.addEventListener('ended', handleEnded);
+
+    return () => {
+      track.removeEventListener('mute', handleMute);
+      track.removeEventListener('unmute', handleUnmute);
+      track.removeEventListener('ended', handleEnded);
+    };
+  }, [participant.stream, participant.isVideoOff]);
+
   // Synchronize media stream to video and audio elements
   useEffect(() => {
     if (participant.stream) {
       // 1. Attach to Video element (muted to ensure 100% autoplay compliance)
       if (videoRef.current) {
-        videoRef.current.srcObject = participant.stream;
+        if (videoRef.current.srcObject !== participant.stream) {
+          videoRef.current.srcObject = participant.stream;
+        }
+        videoRef.current.muted = true;
+        videoRef.current.defaultMuted = true;
         videoRef.current.play().catch(() => {});
       }
 
       // 2. Attach to Audio element (unmuted for remote voice playback)
       if (audioRef.current) {
-        audioRef.current.srcObject = participant.stream;
+        if (audioRef.current.srcObject !== participant.stream) {
+          audioRef.current.srcObject = participant.stream;
+        }
         audioRef.current.volume = 1.0;
         audioRef.current.play().catch((err: any) => {
           console.warn('[RemoteVideoTile] Audio autoplay blocked:', err?.name);
@@ -151,11 +216,11 @@ const RemoteVideoTile: React.FC<{
     }
   }, [participant.stream, participant.isVideoOff, participant.isScreenSharing, onAudioBlocked]);
 
-  const hasVideoStream =
+  const shouldRenderVideo =
     participant.stream &&
     participant.stream.getVideoTracks().length > 0 &&
-    participant.stream.getVideoTracks()[0].enabled &&
-    (!participant.isVideoOff || participant.isScreenSharing);
+    !participant.isVideoOff &&
+    (isTrackLive || participant.isScreenSharing);
 
   const containerClasses = isCompact
     ? 'w-44 h-28 sm:w-52 sm:h-32 shrink-0 relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center shadow-md'
@@ -163,36 +228,51 @@ const RemoteVideoTile: React.FC<{
 
   return (
     <div className={containerClasses}>
-      {/* Remote Video element - muted so browser never blocks rendering */}
-      {hasVideoStream ? (
+      {/* Permanent Fallback Avatar: always mounted underneath to prevent any black flashes */}
+      <div
+        className={`absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400 p-2 text-center transition-opacity duration-200 ${
+          shouldRenderVideo && isVideoFrameRendering ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        }`}
+      >
+        <div
+          className={`${
+            isCompact ? 'h-10 w-10 text-sm' : 'h-16 w-16 sm:h-20 sm:w-20 text-xl sm:text-2xl'
+          } rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-xl shadow-indigo-600/30`}
+        >
+          {participant.displayName.charAt(0).toUpperCase()}
+        </div>
+        <span className="text-xs sm:text-sm font-semibold text-slate-200 truncate max-w-[140px]">
+          {participant.displayName}
+        </span>
+        {!isCompact && (
+          <span className="text-[11px] text-slate-500">
+            {participant.isVideoOff ? 'Camera is off' : 'Connecting video...'}
+          </span>
+        )}
+      </div>
+
+      {/* Remote Video element: displayed only when actively delivering frames */}
+      {participant.stream && (
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted={true}
-          className="w-full h-full object-cover"
+          onLoadedData={() => setIsVideoFrameRendering(true)}
+          onPlaying={() => setIsVideoFrameRendering(true)}
+          onWaiting={() => setIsVideoFrameRendering(false)}
+          onPause={() => setIsVideoFrameRendering(false)}
+          className={`w-full h-full object-cover transition-opacity duration-200 ${
+            shouldRenderVideo && isVideoFrameRendering ? 'opacity-100' : 'opacity-0'
+          }`}
         />
-      ) : (
-        <div className="flex flex-col items-center gap-2 text-slate-400 p-2 text-center">
-          <div
-            className={`${
-              isCompact ? 'h-10 w-10 text-sm' : 'h-16 w-16 sm:h-20 sm:w-20 text-xl sm:text-2xl'
-            } rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-xl shadow-indigo-600/30`}
-          >
-            {participant.displayName.charAt(0).toUpperCase()}
-          </div>
-          <span className="text-xs sm:text-sm font-semibold text-slate-200 truncate max-w-[140px]">
-            {participant.displayName}
-          </span>
-          {!isCompact && <span className="text-[11px] text-slate-500">Camera is off</span>}
-        </div>
       )}
 
       {/* Dedicated Remote Audio Element for guaranteed sound playback */}
       <audio ref={audioRef} autoPlay playsInline />
 
       {/* Participant Name & Status Badge */}
-      <div className="absolute bottom-2.5 left-2.5 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md">
+      <div className="absolute bottom-2.5 left-2.5 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] font-medium text-white flex items-center gap-1.5 border border-slate-800/80 shadow-md z-10">
         {participant.isMuted ? (
           <MicOff className="h-3 w-3 text-red-400" />
         ) : (

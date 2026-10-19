@@ -120,9 +120,6 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
           });
         }
 
-        // Ensure track is enabled
-        event.track.enabled = true;
-
         // Fresh MediaStream instance so React hook & component effect detects change
         const updatedStream = new MediaStream(remoteStream.getTracks());
         remoteStreamsMapRef.current.set(targetSocketId, updatedStream);
@@ -135,6 +132,14 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
 
       pc.oniceconnectionstatechange = () => {
         console.log(`[WebRTC] ICE connection state with ${peerInfo.displayName}: ${pc.iceConnectionState}`);
+        if (pc.iceConnectionState === 'failed') {
+          console.warn(`[WebRTC] ICE connection failed with ${peerInfo.displayName}, attempting ICE restart...`);
+          try {
+            pc.restartIce();
+          } catch (e) {
+            console.warn('[WebRTC] restartIce caught:', e);
+          }
+        }
       };
 
       return pc;
@@ -263,7 +268,12 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
             socket.emit('offer', {
               targetSocketId: peer.socketId,
               offer,
-              callerInfo: { userId, displayName },
+              callerInfo: {
+                userId,
+                displayName,
+                isMuted: isAudioMuted,
+                isVideoOff,
+              },
             });
           } catch (offerErr) {
             console.error('[WebRTC] Error initiating offer to peer:', peer.displayName, offerErr);
@@ -282,13 +292,14 @@ export const useWebRTC = (roomId: string, userId: string, displayName: string) =
       socket.on('offer', async ({ callerSocketId, offer, callerInfo }) => {
         console.log(`[WebRTC] Received offer from ${callerInfo.displayName} (${callerSocketId})`);
         try {
+          const existingPeer = useMeetingStore.getState().participants.find((p) => p.socketId === callerSocketId);
           addParticipant({
             socketId: callerSocketId,
             userId: callerInfo.userId,
             displayName: callerInfo.displayName,
-            isMuted: false,
-            isVideoOff: false,
-            isScreenSharing: false,
+            isMuted: callerInfo.isMuted !== undefined ? callerInfo.isMuted : (existingPeer?.isMuted ?? false),
+            isVideoOff: callerInfo.isVideoOff !== undefined ? callerInfo.isVideoOff : (existingPeer?.isVideoOff ?? false),
+            isScreenSharing: existingPeer?.isScreenSharing ?? false,
           });
 
           let pc = peerConnectionsRef.current.get(callerSocketId);

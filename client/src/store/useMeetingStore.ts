@@ -68,7 +68,16 @@ export const useMeetingStore = create<MeetingState>((set) => ({
       if (existing) {
         return {
           participants: state.participants.map((x) =>
-            x.socketId === p.socketId ? { ...x, ...p, stream: p.stream || x.stream } : x
+            x.socketId === p.socketId
+              ? {
+                  ...x,
+                  ...p,
+                  isMuted: p.isMuted !== undefined ? p.isMuted : x.isMuted,
+                  isVideoOff: p.isVideoOff !== undefined ? p.isVideoOff : x.isVideoOff,
+                  isScreenSharing: p.isScreenSharing !== undefined ? p.isScreenSharing : x.isScreenSharing,
+                  stream: p.stream || x.stream,
+                }
+              : x
           ),
         };
       }
