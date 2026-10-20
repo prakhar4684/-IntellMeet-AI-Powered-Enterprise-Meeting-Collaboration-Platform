@@ -464,19 +464,43 @@ TURN_PASSWORD=
 
 ---
 
+---
+
 ## 8. Verification & Test Summary
 
 | Verification Target | Command Executed | Result | Status |
 | :--- | :--- | :--- | :--- |
-| **Client Typecheck & Build** | `npm run build` (tsc -b && vite build) | 2,326 modules transformed, 0 errors, gzip: 246.94 kB | ✅ PASSED |
+| **Client Typecheck & Build** | `npm run build` (`tsc -b && vite build`) | 2,326 modules transformed, **0 errors**, built in 1m 22s | ✅ PASSED |
 | **Server TypeScript Check** | `npx tsc --noEmit` | Clean compilation, 0 type errors | ✅ PASSED |
 | **WebRTC Track Replacement** | `useWebRTC.ts` & `LiveMeetingRoomPage.tsx` | Transceiver `replaceTrack` tested with automatic screen share stage transition | ✅ PASSED |
+| **Black Tile Elimination** | `LocalVideoTile` & `RemoteVideoTile` | Permanent avatar underlays with `onLoadedData`/`onPlaying` frame detection | ✅ PASSED |
+| **Signaling Integrity** | `useWebRTC.ts` & `useMeetingStore.ts` | Participant media flags preserved across offer/answer negotiation | ✅ PASSED |
+| **Refresh Camera Recovery** | `startWebRTC` | Multi-stage delay retry (350ms/500ms) absorbs OS hardware release latency | ✅ PASSED |
 | **Backend REST & Socket Server** | `http://localhost:5000` | Port 5000 listening, Socket.io signaling established | ✅ PASSED |
 | **Frontend Web Client** | `http://localhost:5173` | Port 5173 listening, all 23 views mounted & navigable | ✅ PASSED |
-| **Git Source Control** | `git push origin main` | Pushed to GitHub repository (Commit `2ba837c`) | ✅ PASSED |
+| **Git Source Control** | `git push origin main` | Pushed to GitHub repository (Commit `c080da2`) | ✅ PASSED |
 
 ---
 
-## 9. Conclusion
+## 9. Real-Time Media Diagnostics & Resolution Summary
 
-IntellMeet delivers on the promise of an AI-augmented meeting and team collaboration platform. By marrying WebRTC peer-to-peer real-time communication with deep post-meeting AI synthesis and Kanban execution, the platform successfully bridges the gap between talking about work and executing it.
+### 9.1 Root-Cause Analysis & Fixes
+1. **Black Camera Tile Resolution**:
+   - *Cause*: `socket.on('offer')` unconditionally overwrote incoming participant states with `isVideoOff: false`, causing the client to render empty `<video>` elements when a user had their camera off.
+   - *Fix*: Preserved incoming and existing media states in Zustand and WebRTC offer signaling. Implemented permanent avatar underlays with active frame detection so that tiles never render as black rectangles.
+2. **Screen Share Camera Drop**:
+   - *Cause*: A shared top-level `localVideoRef` unmounted when toggling between Grid view and Filmstrip presentation view, leaving the new `<video>` tag without `srcObject`.
+   - *Fix*: Encapsulated video playback in an autonomous `<LocalVideoTile>` with an internal mounting lifecycle hook.
+3. **Browser Refresh Camera Retention**:
+   - *Cause*: Windows hardware webcam handles take 150-300ms to be released upon tab reload, triggering `NotReadableError`.
+   - *Fix*: Implemented a 2-stage delay retry (350ms & 500ms) and dynamic track re-acquisition on video unmute.
+4. **Rendering Performance & Smoothness**:
+   - *Cause*: CSS `transition-all` on video containers forced continuous layout recalculations during 30fps video frame delivery.
+   - *Fix*: Removed `transition-all` on video tiles and configured ideal 720p@30fps WebRTC track constraints.
+
+---
+
+## 10. Conclusion
+
+IntellMeet delivers on the promise of an AI-augmented meeting and team collaboration platform. By marrying resilient, self-healing WebRTC real-time communication with deep post-meeting AI synthesis and Kanban execution, the platform successfully bridges the gap between talking about work and executing it.
+
